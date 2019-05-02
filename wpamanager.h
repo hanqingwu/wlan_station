@@ -34,6 +34,7 @@ struct netWorkItem
 class WPAManager 
 {
 public:
+    WPAManager();
     static WPAManager* getInstance(void);
     ~WPAManager();
 
@@ -59,7 +60,6 @@ public:
 
 private:
     static WPAManager *_instance;
-    WPAManager();
 
     //控制socket
     struct wpa_ctrl *ctrl_conn;
@@ -72,12 +72,10 @@ private:
     //wpa_supplicant 路径
     char *ctrl_iface_dir;
 
-    void updateScanResult();
+    list<netWorkItem> updateScanResult();
 
     pthread_t monitor_thread_id;
 
-
-    static void *monitor_process(void *arg);
     void processMsg(char *msg);
     
     void closeWPAConnection();

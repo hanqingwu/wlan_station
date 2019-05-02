@@ -272,28 +272,35 @@ void WPAManager::receiveMsgs()
         len = sizeof(buf) - 1;
         if (wpa_ctrl_recv(monitor_conn, buf, &len) == 0) {
             buf[len] = '\0';
+
+            Debug("%s recv %s\n", __FUNCTION__, buf);
+            
             processMsg(buf);
         }
     }
 }
 
-void SplitString(const std::string& s, std::vector<std::string>& v, const std::string& c)
+void SplitString(const std::string& s, std::vector<std::string>& v, const char *split)
 {
-  std::string::size_type pos1, pos2;
-  pos2 = s.find(c);
-  pos1 = 0;
-  while(std::string::npos != pos2)
-  {
-    v.push_back(s.substr(pos1, pos2-pos1));
+    std::string::size_type pos1, pos2;
+    string c(split);
+    pos2 = s.find(c);
+    pos1 = 0;
 
-    pos1 = pos2 + c.size();
-    pos2 = s.find(c, pos1);
-  }
-  if(pos1 != s.length())
-    v.push_back(s.substr(pos1));
+    while(std::string::npos != pos2)
+    {
+        v.push_back(s.substr(pos1, pos2-pos1));
+
+        pos1 = pos2 + c.size();
+        pos2 = s.find(c, pos1);
+    }
+   
+    if(pos1 != s.length())
+        v.push_back(s.substr(pos1));
 }
 
-void WPAManager::updateScanResult()
+
+list<netWorkItem>WPAManager::updateScanResult()
 {
     char reply[2048];
     size_t reply_len;
@@ -311,7 +318,9 @@ void WPAManager::updateScanResult()
         reply_len = sizeof(reply) - 1;
         if (ctrlRequest(cmd, reply, &reply_len) < 0)
             break;
+
         reply[reply_len] = '\0';
+//        Debug("%s reply %s", __FUNCTION__, reply);
 
         string bss(reply);
         if (bss.empty() || strncmp(bss.c_str(), "FAIL",4) == 0)
@@ -323,61 +332,55 @@ void WPAManager::updateScanResult()
         SplitString(bss, lines, "\n");
 
         for (vector<string>::iterator it = lines.begin();it != lines.end(); it++) {
-#if 0            
-            int pos = (*it).indexOf('=') + 1;
-            if (pos < 1)
-                continue;
 
-            if ((*it).startsWith("bssid="))
-                bssid = (*it).mid(pos);
-            else if ((*it).startsWith("freq="))
-                freq = (*it).mid(pos);
-            else if ((*it).startsWith("level="))
-                signal = (*it).mid(pos);
-            else if ((*it).startsWith("flags="))
-                flags = (*it).mid(pos);
-            else if ((*it).startsWith("ssid="))
-                ssid = (*it).mid(pos);
-#endif            
+            size_t pos;
+
+            if ((pos = (*it).find("bssid=")) != std::string::npos)
+                bssid = (*it).substr(pos + strlen("bssid="));
+            else if ((pos = (*it).find("freq=")) != std::string::npos)
+                freq = (*it).substr(pos + strlen("freq="));
+            else if ((pos = (*it).find("level=")) != std::string::npos)
+                signal = (*it).substr(pos + strlen("level="));
+            else if ((pos = (*it).find("flags=")) != std::string::npos)
+                flags = (*it).substr(pos + strlen("flags="));
+            else if ((pos = (*it).find("ssid=")) != std::string::npos)
+                ssid = (*it).substr(pos +strlen("ssid="));
+
         }
+        
+        if (!ssid.empty())
+        {
+            netWorkItem item;
+            item.ssid = ssid;
+            item.bssid = bssid;
+            item.frequence = freq;
+            item.signal = signal;
+            item.flags = flags;
 
-        netWorkItem item;
-        item.ssid = ssid;
-        item.bssid = bssid;
-        item.frequence = freq;
-        item.signal = signal;
-        item.flags = flags;
 
-//        netWorksList.push_back(item);
+            Debug("push back ssid = %s \n", item.ssid.c_str());
+            netWorksList.push_back(item);
+        }
 
         if (bssid.empty())
             break;
     }
 
-//    emit sig_scanResultAvailable(netWorksList);
+    //发送消息?
+    //
+    return netWorksList;
 }
 
-#if 0
-void WPAManager::ping()
+list<netWorkItem> WPAManager::get_avail_wireless_network()
 {
-    char buf[10];
-    size_t len;
+    Debug("%s  star scan \n", __FUNCTION__);
 
-    if (ctrl_conn != NULL) {
-        timer->stop();
-        return;
-    }
+    scan();
 
-    len = sizeof(buf) - 1;
-    if (ctrlRequest("PING", buf, &len) < 0) {
-        //        Debug("PING failed - trying to reconnect");
-        if (openCtrlConnection(ctrl_iface) >= 0) {
-            Debug("Reconnected successfully");
-        //    timer->stop();
-        }
-    }
+    Debug("%s updateScanResult ...\n", __FUNCTION__);
+
+    return updateScanResult();
 }
-#endif
 
 void WPAManager::scan()
 {
@@ -386,54 +389,6 @@ void WPAManager::scan()
     ctrlRequest("SCAN", reply, &reply_len);
 }
 
-#if 0
-void WPAManager::updateScanResultIfNecessary()
-{
-    /* get wpa_state first */
-    char buf[2048], *start, *end, *pos;
-    size_t len;
-
-    len = sizeof(buf) - 1;
-    if (ctrl_conn == NULL || ctrlRequest("STATUS", buf, &len) < 0) {
-        Debug("Could not get status from wpa_supplicant.");
-        return;
-    }
-
-    buf[len] = '\0';
-    start = buf;
-
-    while (*start) {
-        bool last = false;
-        end = strchr(start, '\n');
-        if (end == NULL) {
-            last = true;
-            end = start;
-            while (end[0] && end[1])
-                end++;
-        }
-        *end = '\0';
-
-        pos = strchr(start, '=');
-        if (pos) {
-            *pos++ = '\0';
-            /*
-             * NOTE: do so because that the wpa_supplicant doen't execute scan when wpa_state
-             * in state of 'complete' or 'inative'
-             */
-            if (strcmp(start, "wpa_state") == 0) {
-                if (strcmp(pos, "COMPLETED") == 0 || strcmp(pos, "INACTIVE")) {
-                    scan();
-                    return;
-                }
-            }
-        }
-
-        if (last)
-            break;
-        start = end + 1;
-    }
-}
-#endif
 
 int WPAManager::setNetworkParam(int id, const char *field,
                                 const char *value, bool quote)
@@ -498,7 +453,7 @@ void WPAManager::disconnectNetwork()
     memset(reply, 0, sizeof(reply));
     reply_len = sizeof(reply) - 1;
 
-    ctrlRequest("DISCONNECT", reply, &reply_len);
+    ctrlRequest("DISCONNECT ", reply, &reply_len);
     Debug("%s ret %s\n", __FUNCTION__, reply);
 /*    if (reply[0] == 'F') {
         Debug("error: failed to add network");

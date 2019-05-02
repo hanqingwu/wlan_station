@@ -102,7 +102,7 @@ struct wpa_ctrl * wpa_ctrl_open2(const char *ctrl_path,
 	if (ctrl_path == NULL)
 		return NULL;
 
-	ctrl = os_zalloc(sizeof(*ctrl));
+	ctrl = (struct wpa_ctrl *)os_zalloc(sizeof(*ctrl));
 	if (ctrl == NULL)
 		return NULL;
 

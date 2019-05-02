@@ -16,6 +16,9 @@
 #define BUILD_CONFIG_H
 
 /* Insert configuration defines, e.g., #define EAP_MD5, here, if needed. */
+#define CONFIG_CTRL_IFACE
+#define CONFIG_CTRL_IFACE_UNIX
+#define CONFIG_IFACE_SOCKET
 
 #ifdef CONFIG_WIN32_DEFAULTS
 #define CONFIG_NATIVE_WINDOWS
@@ -24,8 +27,6 @@
 #define IEEE8021X_EAPOL
 #define PKCS12_FUNCS
 #define PCSC_FUNCS
-#define CONFIG_CTRL_IFACE
-#define CONFIG_CTRL_IFACE_NAMED_PIPE
 #define CONFIG_DRIVER_NDIS
 #define CONFIG_NDIS_EVENTS_INTEGRATED
 #define CONFIG_DEBUG_FILE
