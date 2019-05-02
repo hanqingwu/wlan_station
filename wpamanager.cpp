@@ -9,22 +9,30 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include <string.h>
+
+#include <vector>
+
+#define varName(x) #x
 
 #define Debug(format, ...) do{      \
-        printf(format, __VA_ARGS__);    \
+        printf(format, ##__VA_ARGS__);    \
                                         \
 } while(0)
+
+using std::vector;
 
 WPAManager *WPAManager::_instance = NULL;
 
 WPAManager* WPAManager::getInstance(void)
 {
     if (!_instance)
-        _instance = new WPAManager(parent);
+        _instance = new WPAManager();
 
     return _instance;
 }
-mZWPAManager::WPAManager()
+
+WPAManager::WPAManager()
 {
     ctrl_conn = NULL;
     ctrl_iface = NULL;
@@ -41,11 +49,19 @@ mZWPAManager::WPAManager()
 }
 
 
-void *WPAManager::monitor_process(void *arg)
+struct wpa_ctrl *WPAManager::get_monitor_conn()
+{
+    return monitor_conn;
+}
+
+void *monitor_process(void *arg)
 {
     fd_set rd;
     struct timeval  tv;
     int err;
+    class WPAManager *manger = (class WPAManager * )arg;
+    
+    struct wpa_ctrl *monitor_conn = manger->get_monitor_conn();
     int fd = wpa_ctrl_get_fd(monitor_conn);
 
     //select 
@@ -72,23 +88,24 @@ void *WPAManager::monitor_process(void *arg)
         {
             if (FD_ISSET(fd, &rd))
             {
-                receiveMsgs();
+                manger->receiveMsgs();
             }
         }
     
-        if (pthread_mutex_trylock(thread_exit_mutex) == 0)
+        if (pthread_mutex_trylock(&manger->thread_exit_mutex) == 0)
         {
-            Debug("%s  receive exit signal !\n");
+            Debug("%s  receive exit signal !\n",__FUNCTION__);
             break;
         }
 
     }
 
-    pthread_mutex_destroy(&thread_exit_mutex);
+    pthread_mutex_destroy(&manger->thread_exit_mutex);
 
     pthread_exit(NULL);
 }
 
+//打开与wpa的连接
 int WPAManager::openCtrlConnection(const char *ifname)
 {
     char *cfile;
@@ -150,8 +167,14 @@ int WPAManager::openCtrlConnection(const char *ifname)
         wpa_ctrl_close(monitor_conn);
         monitor_conn = NULL;
 
+    }
+
+
+    if (monitor_thread_id)
+    {
         pthread_mutex_unlock(&thread_exit_mutex);
         usleep(200000);
+        monitor_thread_id = 0;
     }
 
     ctrl_conn = wpa_ctrl_open(cfile);
@@ -159,6 +182,7 @@ int WPAManager::openCtrlConnection(const char *ifname)
         free(cfile);
         goto _exit_failed;
     }
+
     monitor_conn = wpa_ctrl_open(cfile);
     free(cfile);
     if (monitor_conn == NULL) {
@@ -174,15 +198,14 @@ int WPAManager::openCtrlConnection(const char *ifname)
         goto _exit_failed;
     }
 
-    phread_mutex_init(&thread_exit_mutex, NULL);
+    pthread_mutex_init(&thread_exit_mutex, NULL);
 
     pthread_mutex_lock(&thread_exit_mutex);
 
     //创建monitor线程
     pthread_create(&monitor_thread_id, NULL, 
-                          monitor_process, NULL);
+                          monitor_process, (void*)this);
     
-
     return 0;
 
 _exit_failed:
@@ -210,12 +233,7 @@ void WPAManager::processMsg(char *msg)
             pos = msg;
     }
 
-    WpaMsg wm(pos, priority);
-
-    msgs.append(wm);
-    while (msgs.count() > 100)
-        msgs.pop_front();
-
+    
     /* Update last message with truncated version of the event */
     if (strncmp(pos, "CTRL-", 5) == 0) {
         pos2 = strchr(pos, str_match(pos, WPA_CTRL_REQ) ? ':' : ' ');
@@ -225,21 +243,22 @@ void WPAManager::processMsg(char *msg)
             pos2 = pos;
     } else
         pos2 = pos;
-    QString lastmsg = pos2;
-    lastmsg.truncate(40);
+
+    string lastmsg = pos2;
+//    lastmsg.truncate(40);
 
     if (str_match(pos, WPA_EVENT_SCAN_RESULTS)) {
         updateScanResult();
     } else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
-        emit sig_eventConnecting(getConnectingSSIDFromMsg(pos));
+ //       emit sig_eventConnecting(getConnectingSSIDFromMsg(pos));
     } else if (str_match(pos, WPA_EVENT_TEMP_DISABLED)) {
-        emit sig_eventConnectFail(getFailedSSIDFromMsg(pos));
+//        emit sig_eventConnectFail(getFailedSSIDFromMsg(pos));
         scan();
     } else if (str_match(pos, WPA_EVENT_CONNECTED)) {
-        emit sig_eventConnectComplete(getConnectedBSSIDFromMsg(pos));
+//        emit sig_eventConnectComplete(getConnectedBSSIDFromMsg(pos));
         scan();
     } else if (str_match(pos, WPA_EVENT_DISCONNECTED)) {
-        emit sig_eventDisconnected(getDisconnetedBSSIDFromMsg(pos));
+//        emit sig_eventDisconnected(getDisconnetedBSSIDFromMsg(pos));
         scan();
     }
 }
@@ -258,13 +277,30 @@ void WPAManager::receiveMsgs()
     }
 }
 
+void SplitString(const std::string& s, std::vector<std::string>& v, const std::string& c)
+{
+  std::string::size_type pos1, pos2;
+  pos2 = s.find(c);
+  pos1 = 0;
+  while(std::string::npos != pos2)
+  {
+    v.push_back(s.substr(pos1, pos2-pos1));
+
+    pos1 = pos2 + c.size();
+    pos2 = s.find(c, pos1);
+  }
+  if(pos1 != s.length())
+    v.push_back(s.substr(pos1));
+}
+
 void WPAManager::updateScanResult()
 {
     char reply[2048];
     size_t reply_len;
     int index;
     char cmd[20];
-    QList<netWorkItem> netWorksList;
+
+    list<netWorkItem> netWorksList;
 
     index = 0;
     while (true) {
@@ -277,15 +313,17 @@ void WPAManager::updateScanResult()
             break;
         reply[reply_len] = '\0';
 
-        QString bss(reply);
-        if (bss.isEmpty() || bss.startsWith("FAIL"))
+        string bss(reply);
+        if (bss.empty() || strncmp(bss.c_str(), "FAIL",4) == 0)
             break;
 
-        QString ssid, bssid, freq, signal, flags;
+        string ssid, bssid, freq, signal, flags;
+        vector<string> lines;
 
-        QStringList lines = bss.split(QRegExp("\\n"));
+        SplitString(bss, lines, "\n");
 
-        for (QStringList::Iterator it = lines.begin();it != lines.end(); it++) {
+        for (vector<string>::iterator it = lines.begin();it != lines.end(); it++) {
+#if 0            
             int pos = (*it).indexOf('=') + 1;
             if (pos < 1)
                 continue;
@@ -300,6 +338,7 @@ void WPAManager::updateScanResult()
                 flags = (*it).mid(pos);
             else if ((*it).startsWith("ssid="))
                 ssid = (*it).mid(pos);
+#endif            
         }
 
         netWorkItem item;
@@ -309,15 +348,16 @@ void WPAManager::updateScanResult()
         item.signal = signal;
         item.flags = flags;
 
-        netWorksList.append(item);
+//        netWorksList.push_back(item);
 
-        if (bssid.isEmpty())
+        if (bssid.empty())
             break;
     }
 
-    emit sig_scanResultAvailable(netWorksList);
+//    emit sig_scanResultAvailable(netWorksList);
 }
 
+#if 0
 void WPAManager::ping()
 {
     char buf[10];
@@ -333,10 +373,11 @@ void WPAManager::ping()
         //        Debug("PING failed - trying to reconnect");
         if (openCtrlConnection(ctrl_iface) >= 0) {
             Debug("Reconnected successfully");
-            timer->stop();
+        //    timer->stop();
         }
     }
 }
+#endif
 
 void WPAManager::scan()
 {
@@ -345,6 +386,7 @@ void WPAManager::scan()
     ctrlRequest("SCAN", reply, &reply_len);
 }
 
+#if 0
 void WPAManager::updateScanResultIfNecessary()
 {
     /* get wpa_state first */
@@ -391,6 +433,7 @@ void WPAManager::updateScanResultIfNecessary()
         start = end + 1;
     }
 }
+#endif
 
 int WPAManager::setNetworkParam(int id, const char *field,
                                 const char *value, bool quote)
@@ -404,18 +447,17 @@ int WPAManager::setNetworkParam(int id, const char *field,
     return strncmp(reply, "OK", 2) == 0 ? 0 : -1;
 }
 
-void WPAManager::selectNetwork(const QString &sel)
+void WPAManager::selectNetwork(const string &sel)
 {
-    QString cmd(sel);
+    string cmd = string("SELECT_NETWORK ") + sel;
     char reply[10];
     size_t reply_len = sizeof(reply);
 
-    cmd.prepend("SELECT_NETWORK ");
-    ctrlRequest(cmd.toLocal8Bit().constData(), reply, &reply_len);
+    ctrlRequest(cmd.c_str(), reply, &reply_len);
     scan();
 }
 
-void WPAManager::connectNetwork(const QString &ssid, const QString &password)
+void WPAManager::connectNetwork(const string &ssid, const string &password)
 {
     char reply[10], cmd[256];
     size_t reply_len;
@@ -432,16 +474,38 @@ void WPAManager::connectNetwork(const QString &ssid, const QString &password)
 
     id = atoi(reply);
 
-    setNetworkParam(id, "ssid", ssid.toLocal8Bit().constData(), true);
-    setNetworkParam(id, "psk", password.toLocal8Bit().constData(), true);
+    setNetworkParam(id, "ssid", ssid.c_str(), true);
+    setNetworkParam(id, "psk", password.c_str(), true);
 
-    selectNetwork(QString::number(id, 10));
+    selectNetwork(varName(id));
 
     snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
     ctrlRequest(cmd, reply, &reply_len);
 
     memset(reply, 0, sizeof(reply));
     ctrlRequest("SAVE_CONFIG", reply, &reply_len);
+
+    return;
+}
+
+
+void WPAManager::disconnectNetwork()
+{
+    char reply[10], cmd[256];
+    size_t reply_len;
+    int id;
+
+    memset(reply, 0, sizeof(reply));
+    reply_len = sizeof(reply) - 1;
+
+    ctrlRequest("DISCONNECT", reply, &reply_len);
+    Debug("%s ret %s\n", __FUNCTION__, reply);
+/*    if (reply[0] == 'F') {
+        Debug("error: failed to add network");
+        return;
+    }
+*/
+    return;
 }
 
 void WPAManager::removeNetwork(int networkId)
@@ -449,9 +513,8 @@ void WPAManager::removeNetwork(int networkId)
     char reply[10];
     size_t reply_len = sizeof(reply);
 
-    QString cmd = QString::number(networkId);
-    cmd.prepend("REMOVE_NETWORK ");
-    ctrlRequest(cmd.toLocal8Bit().constData(), reply, &reply_len);
+    string cmd = string("REMOVE_NETWORK ") + string(varName(networkId));
+    ctrlRequest(cmd.c_str(), reply, &reply_len);
 
     memset(reply, 0, sizeof(reply));
     ctrlRequest("SAVE_CONFIG", reply, &reply_len);
@@ -507,25 +570,25 @@ bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
         return false;
 }
 
-QList<netWorkItem> WPAManager::getConfiguredNetWork()
+list<netWorkItem> WPAManager::getConfiguredNetWork()
 {
     char buf[4096], *start, *end, *id, *ssid, *bssid, *flags;
     size_t len;
-    QList<netWorkItem> list;
+    list<netWorkItem> list_item;
     netWorkItem connectedItem;
     bool isConnected = getConnectedItem(&connectedItem);
 
     if (ctrl_conn == NULL)
-        return list;
+        return list_item;
 
     len = sizeof(buf) - 1;
     if (ctrlRequest("LIST_NETWORKS", buf, &len) < 0)
-        return list;
+        return list_item;
 
     buf[len] = '\0';
     start = strchr(buf, '\n');
     if (start == NULL)
-        return list;
+        return list_item;
     start++;
 
     while (*start) {
@@ -572,44 +635,38 @@ QList<netWorkItem> WPAManager::getConfiguredNetWork()
         else
             item.state = WIFI_STATE_SAVED;
 
-        list.append(item);
+        list_item.push_back(item);
 
         if (last)
             break;
         start = end + 1;
     }
 
-    return list;
+    return list_item;
 }
 
 void WPAManager::closeWPAConnection()
 {
-    m_connMutex.lock();
-
-    timer->stop();
     if (monitor_conn) {
         wpa_ctrl_detach(monitor_conn);
         wpa_ctrl_close(monitor_conn);
         monitor_conn = NULL;
     }
 
+    if (monitor_thread_id)
+    {
+        pthread_mutex_unlock(&thread_exit_mutex);
+        usleep(200000);
+        monitor_thread_id = 0;
+    }
+   
     if (ctrl_conn) {
         wpa_ctrl_close(ctrl_conn);
         ctrl_conn = NULL;
     }
 
-    m_connMutex.unlock();
 }
 
-void WPAManager::startWPAConnection()
-{
-    m_connMutex.lock();
-
-    if (ctrl_conn == NULL)
-        timer->start(1000);
-
-    m_connMutex.unlock();
-}
 
 int WPAManager::ctrlRequest(const char *cmd, char *buf, size_t *buflen)
 {
@@ -628,23 +685,14 @@ int WPAManager::ctrlRequest(const char *cmd, char *buf, size_t *buflen)
 
 WPAManager::~WPAManager()
 {
-    delete msgNotifier;
+    closeWPAConnection();
 
-    if (monitor_conn) {
-        wpa_ctrl_detach(monitor_conn);
-        wpa_ctrl_close(monitor_conn);
-        monitor_conn = NULL;
-    }
-
-    if (ctrl_conn) {
-        wpa_ctrl_close(ctrl_conn);
-        ctrl_conn = NULL;
-    }
-
-    free(ctrl_iface);
+    if (ctrl_iface)
+        free(ctrl_iface);
     ctrl_iface = NULL;
 
-    free(ctrl_iface_dir);
+    if (ctrl_iface_dir)
+        free(ctrl_iface_dir);
     ctrl_iface_dir = NULL;
 }
 

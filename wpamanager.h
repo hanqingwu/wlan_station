@@ -3,9 +3,12 @@
 
 
 #include <string>
+#include <list>
 
 #include <pthread.h>
 
+using  std::string;
+using  std::list;
 
 #define CTRL_EVENT_CONNECTING "Trying to associate with"
 
@@ -21,9 +24,9 @@ struct netWorkItem
 {
     string ssid;
     string bssid;
-    String frequence;
-    String signal;
-    String flags;
+    string frequence;
+    string signal;
+    string flags;
     int networkId = -1;
     WifiState state = WIFI_STATE_NULL;
 };
@@ -36,16 +39,23 @@ public:
 
     int ctrlRequest(const char *cmd, char *buf, size_t *buflen);
 
-    List<netWorkItem> get_avail_wireless_network();
+    list<netWorkItem> get_avail_wireless_network();
 
-    void connectNetwork(const String &ssid, const String &password);
+    void connectNetwork(const string &ssid, const string &password);
     void disconnectNetwork();
     
     int openCtrlConnection(const char *ifname);
 
-    List<netWorkItem> getConfiguredNetWork();
+    list<netWorkItem> getConfiguredNetWork();
     bool getConnectedItem(netWorkItem *connectedItem);
 
+    void removeNetwork(int networkId);
+
+    struct wpa_ctrl *get_monitor_conn();
+
+    pthread_mutex_t  thread_exit_mutex;
+
+    void receiveMsgs();
 
 private:
     static WPAManager *_instance;
@@ -68,10 +78,13 @@ private:
 
 
     static void *monitor_process(void *arg);
-    static void WPAManager::receiveMsgs();
+    void processMsg(char *msg);
+    
+    void closeWPAConnection();
+    void scan();
+    void selectNetwork(const string &sel);
+    int setNetworkParam(int id, const char *field, const char *value, bool quote);
 
-
-    phread_mutex_t  thread_exit_mutex;
 };
 
 #endif // WPAMANAGER_H
