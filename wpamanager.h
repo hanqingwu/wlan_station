@@ -78,10 +78,10 @@ private:
 
     void processMsg(char *msg);
     
-    void closeWPAConnection();
     void scan();
     void selectNetwork(const string &sel);
     int setNetworkParam(int id, const char *field, const char *value, bool quote);
+    void closeWPAConnection();
 
 };
 

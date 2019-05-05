@@ -137,6 +137,9 @@ int WPAManager::openCtrlConnection(const char *ifname)
                 if (strcmp(dent->d_name, ".") == 0 ||
                         strcmp(dent->d_name, "..") == 0)
                     continue;
+                if (strncmp(dent->d_name, "p2p",3 ) == 0)
+                    continue;
+
                 Debug("Selected interface '%s'",
                        dent->d_name);
                 ctrl_iface = strdup(dent->d_name);
@@ -373,11 +376,7 @@ list<netWorkItem>WPAManager::updateScanResult()
 
 list<netWorkItem> WPAManager::get_avail_wireless_network()
 {
-    Debug("%s  star scan \n", __FUNCTION__);
-
     scan();
-
-    Debug("%s updateScanResult ...\n", __FUNCTION__);
 
     return updateScanResult();
 }
