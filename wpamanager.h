@@ -38,10 +38,10 @@ public:
     static WPAManager* getInstance(void);
     ~WPAManager();
 
-    int ctrlRequest(const char *cmd, char *buf, size_t *buflen);
-
+    //获取当前可用wifi AP
     list<netWorkItem> get_avail_wireless_network();
 
+    //连接WIFI或断开
     void connectNetwork(const string &ssid, const string &password);
     void disconnectNetwork();
     
@@ -60,6 +60,8 @@ public:
 
 private:
     static WPAManager *_instance;
+
+    int ctrlRequest(const char *cmd, char *buf, size_t *buflen);
 
     //控制socket
     struct wpa_ctrl *ctrl_conn;

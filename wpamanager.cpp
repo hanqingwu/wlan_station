@@ -78,10 +78,11 @@ void *monitor_process(void *arg)
         if(err == 0) //超时
         {
            // printf("select time out!\n");
+            continue;
         }
         else if(err == -1)  //失败
         {
-            printf("fail to select!\n");
+            Debug("fail to select!\n");
             break;
         }
         else  //成功
@@ -176,7 +177,7 @@ int WPAManager::openCtrlConnection(const char *ifname)
     if (monitor_thread_id)
     {
         pthread_mutex_unlock(&thread_exit_mutex);
-        usleep(200000);
+        pthread_join(monitor_thread_id, NULL);
         monitor_thread_id = 0;
     }
 
@@ -610,7 +611,7 @@ void WPAManager::closeWPAConnection()
     if (monitor_thread_id)
     {
         pthread_mutex_unlock(&thread_exit_mutex);
-        usleep(200000);
+        pthread_join(monitor_thread_id, NULL);
         monitor_thread_id = 0;
     }
    
