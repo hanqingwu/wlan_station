@@ -42,7 +42,7 @@ public:
     list<netWorkItem> get_avail_wireless_network();
 
     //连接WIFI或断开
-    void connectNetwork(const string &ssid, const string &password);
+    int connectNetwork(const string &ssid, const string &password);
     void disconnectNetwork();
     
     int openCtrlConnection(const char *ifname);
