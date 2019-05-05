@@ -58,7 +58,6 @@ public:
 
     struct wpa_ctrl *get_monitor_conn();
 
-    pthread_mutex_t  thread_exit_mutex;
 
     void receiveMsgs();
 

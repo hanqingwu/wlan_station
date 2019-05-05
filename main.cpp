@@ -34,18 +34,31 @@ int main(int argc , char **argv)
             {
 
                 cout <<"ssid "<<(*it).ssid << endl;
-                cout << "bssid "<< (*it).bssid << endl;
+ /*               cout << "bssid "<< (*it).bssid << endl;
                 cout << "freq "<<(*it).frequence << endl;
                 cout << "signal "<< (*it).signal << endl;
                 cout << "flags "<< (*it).flags << endl;
-            }
+ */           }
 
             sleep(3);
 
         }
         while(0);
 
-        manager.connectNetwork(string("Openwrt"), string("12345678"));
+        cout << "start connect \n"<< endl;
+
+        manager.connectNetwork(string("OpenWrt"), string("18181818"));
+
+        sleep(10);
+        manager.getConfiguredNetWork();
+
+        cout << "start disconnect \n"<< endl;
+
+        manager.disconnectNetwork();
+
+        cout << "slee 10 second "<< endl;
+
+        manager.getConfiguredNetWork();
 
         sleep(10);
 

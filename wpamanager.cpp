@@ -11,6 +11,7 @@
 
 #include <string.h>
 
+#include <errno.h>
 #include <vector>
 
 #define varName(x) #x
@@ -82,7 +83,7 @@ void *monitor_process(void *arg)
         }
         else if(err == -1)  //失败
         {
-            Debug("fail to select!\n");
+            Debug("fail to select %s!\n", strerror(errno));
             break;
         }
         else  //成功
@@ -92,18 +93,14 @@ void *monitor_process(void *arg)
                 manger->receiveMsgs();
             }
         }
-    
-        if (pthread_mutex_trylock(&manger->thread_exit_mutex) == 0)
-        {
-            Debug("%s  receive exit signal !\n",__FUNCTION__);
-            break;
-        }
 
     }
 
-    pthread_mutex_destroy(&manger->thread_exit_mutex);
+   
+    Debug("%s exit ...\n", __FUNCTION__);
 
     pthread_exit(NULL);
+
 }
 
 //打开与wpa的连接
@@ -176,7 +173,6 @@ int WPAManager::openCtrlConnection(const char *ifname)
 
     if (monitor_thread_id)
     {
-        pthread_mutex_unlock(&thread_exit_mutex);
         pthread_join(monitor_thread_id, NULL);
         monitor_thread_id = 0;
     }
@@ -202,9 +198,6 @@ int WPAManager::openCtrlConnection(const char *ifname)
         goto _exit_failed;
     }
 
-    pthread_mutex_init(&thread_exit_mutex, NULL);
-
-    pthread_mutex_lock(&thread_exit_mutex);
 
     //创建monitor线程
     pthread_create(&monitor_thread_id, NULL, 
@@ -362,7 +355,7 @@ list<netWorkItem>WPAManager::updateScanResult()
             item.flags = flags;
 
 
-            Debug("push back ssid = %s \n", item.ssid.c_str());
+//            Debug("push back ssid = %s \n", item.ssid.c_str());
             netWorksList.push_back(item);
         }
 
@@ -399,6 +392,9 @@ int WPAManager::setNetworkParam(int id, const char *field,
              id, field, quote ? "\"" : "", value, quote ? "\"" : "");
     reply_len = sizeof(reply);
     ctrlRequest(cmd, reply, &reply_len);
+
+    Debug("%s cmd %s, reply %s\n", __FUNCTION__, cmd, reply);
+
     return strncmp(reply, "OK", 2) == 0 ? 0 : -1;
 }
 
@@ -412,9 +408,9 @@ void WPAManager::selectNetwork(const string &sel)
     scan();
 }
 
-void WPAManager::connectNetwork(const string &ssid, const string &password)
+int WPAManager::connectNetwork(const string &ssid, const string &password)
 {
-    char reply[10], cmd[256];
+    char reply[256], cmd[256];
     size_t reply_len;
     int id;
 
@@ -424,10 +420,11 @@ void WPAManager::connectNetwork(const string &ssid, const string &password)
     ctrlRequest("ADD_NETWORK", reply, &reply_len);
     if (reply[0] == 'F') {
         Debug("error: failed to add network");
-        return;
+        return -1;
     }
 
     id = atoi(reply);
+    Debug("ADD_NETWORK get %d\n", id);
 
     setNetworkParam(id, "ssid", ssid.c_str(), true);
     setNetworkParam(id, "psk", password.c_str(), true);
@@ -436,24 +433,25 @@ void WPAManager::connectNetwork(const string &ssid, const string &password)
 
     snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
     ctrlRequest(cmd, reply, &reply_len);
+    Debug("ENABLE_NETWORK %d ret %s\n", id, reply);
 
     memset(reply, 0, sizeof(reply));
     ctrlRequest("SAVE_CONFIG", reply, &reply_len);
-
-    return;
+    Debug("SAVE_CONFIG  ret %s\n", reply);
+    return id;
 }
 
 
 void WPAManager::disconnectNetwork()
 {
-    char reply[10], cmd[256];
+    char reply[256], cmd[256];
     size_t reply_len;
     int id;
 
     memset(reply, 0, sizeof(reply));
     reply_len = sizeof(reply) - 1;
 
-    ctrlRequest("DISCONNECT ", reply, &reply_len);
+    ctrlRequest("DISCONNECT", reply, &reply_len);
     Debug("%s ret %s\n", __FUNCTION__, reply);
 /*    if (reply[0] == 'F') {
         Debug("error: failed to add network");
@@ -486,6 +484,9 @@ bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
         Debug("Could not get status from wpa_supplicant.");
         return false;
     }
+
+    Debug("%s get status %s\n", __FUNCTION__, buf);
+
 
     buf[len] = '\0';
     start = buf;
@@ -610,7 +611,6 @@ void WPAManager::closeWPAConnection()
 
     if (monitor_thread_id)
     {
-        pthread_mutex_unlock(&thread_exit_mutex);
         pthread_join(monitor_thread_id, NULL);
         monitor_thread_id = 0;
     }
@@ -640,6 +640,8 @@ int WPAManager::ctrlRequest(const char *cmd, char *buf, size_t *buflen)
 
 WPAManager::~WPAManager()
 {
+    Debug("destory WPAManager\n");
+
     closeWPAConnection();
 
     if (ctrl_iface)
