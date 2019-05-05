@@ -47,9 +47,13 @@ public:
     
     int openCtrlConnection(const char *ifname);
 
+    //获取配置的网络
     list<netWorkItem> getConfiguredNetWork();
+
+    //获取网络是否已连接
     bool getConnectedItem(netWorkItem *connectedItem);
 
+    //删除已配置网络
     void removeNetwork(int networkId);
 
     struct wpa_ctrl *get_monitor_conn();
