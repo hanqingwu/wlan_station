@@ -66,9 +66,10 @@ int main(int argc , char **argv)
 
     netWorkItem connectedItem;
     bool isConnected = manager.getConnectedItem(&connectedItem);
+
         cout << "status  "<< isConnected << " ssid  "<< connectedItem.ssid <<endl;
 
-        cout << "start disconnect \n"<< endl;
+        cout << "start disconnect "<< endl;
 
         manager.disconnectNetwork();
 

@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <string.h>
+#include <signal.h>
 
 #include <errno.h>
 #include <vector>
@@ -83,6 +84,7 @@ void *control_ping_process(void *arg)
 {
     struct timeval  tv;
     class WPAManager *manger = (class WPAManager * )arg;
+    int ret = 0;
     
     while(1)
     {
@@ -91,9 +93,19 @@ void *control_ping_process(void *arg)
         tv.tv_usec = 0;
 
         select(0, NULL,NULL,NULL,&tv);
-        manger->ping();
+
+        ret = manger->ping();
+        Debug("%s ret %d\n",__FUNCTION__, ret );
+
+        if (pthread_mutex_trylock(&manger->control_thread_exit_mutex) == 0)
+        {
+            Debug("%s  receive exit signal !\n",__FUNCTION__);
+            break;
+        }
+
     }
 
+    pthread_mutex_destroy(&manger->control_thread_exit_mutex);
    
     Debug("%s exit ...\n", __FUNCTION__);
 
@@ -114,9 +126,14 @@ int WPAManager::wifi_poweron(int on)
             
             if (control_thread_id)
             {
+                pthread_mutex_unlock(&control_thread_exit_mutex);
                 pthread_join(control_thread_id, NULL);
                 control_thread_id = 0;
             }
+
+            pthread_mutex_init(&control_thread_exit_mutex, NULL);
+
+            pthread_mutex_lock(&control_thread_exit_mutex);
 
              //创建monitor线程
             pthread_create(&control_thread_id, NULL, 
@@ -129,8 +146,13 @@ int WPAManager::wifi_poweron(int on)
     {
         if (control_thread_id)
         {
+            Debug("wait control thread exit \n");
+            pthread_mutex_unlock(&control_thread_exit_mutex);
+
             pthread_join(control_thread_id, NULL);
+
             control_thread_id = 0;
+            Debug("control thread exit ok \n");
         }
 
         wifi_stop_supplicant();
@@ -183,8 +205,17 @@ void *monitor_process(void *arg)
             }
         }
 
+        if (pthread_mutex_trylock(&manger->monitor_thread_exit_mutex) == 0)
+        {
+            Debug("%s  receive exit signal !\n",__FUNCTION__);
+            break;
+        }
+
+
+
     }
 
+    pthread_mutex_destroy(&manger->monitor_thread_exit_mutex);
    
     Debug("%s exit ...\n", __FUNCTION__);
 
@@ -262,6 +293,7 @@ int WPAManager::openCtrlConnection(const char *ifname)
 
     if (monitor_thread_id)
     {
+        pthread_mutex_unlock(&monitor_thread_exit_mutex);
         pthread_join(monitor_thread_id, NULL);
         monitor_thread_id = 0;
     }
@@ -287,7 +319,9 @@ int WPAManager::openCtrlConnection(const char *ifname)
         goto _exit_failed;
     }
 
+    pthread_mutex_init(&monitor_thread_exit_mutex, NULL);
 
+    pthread_mutex_lock(&monitor_thread_exit_mutex);
     //创建monitor线程
     pthread_create(&monitor_thread_id, NULL, 
                           monitor_process, (void*)this);
@@ -597,7 +631,6 @@ void WPAManager::disconnectNetwork()
     reply_len = sizeof(reply) - 1;
 
     ctrlRequest("DISCONNECT", reply, &reply_len);
-    Debug("%s ret %s\n", __FUNCTION__, reply);
     if (reply[0] == 'F') {
         Debug("error: failed to add network");
         return;
@@ -777,6 +810,7 @@ void WPAManager::closeWPAConnection()
 
     if (monitor_thread_id)
     {
+        pthread_mutex_unlock(&monitor_thread_exit_mutex);
         pthread_join(monitor_thread_id, NULL);
         monitor_thread_id = 0;
     }

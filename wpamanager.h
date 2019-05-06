@@ -65,6 +65,10 @@ public:
 
     int ping();
 
+
+    pthread_mutex_t  monitor_thread_exit_mutex;
+    pthread_mutex_t  control_thread_exit_mutex;
+
 private:
     static WPAManager *_instance;
 
