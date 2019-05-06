@@ -24,6 +24,17 @@ int main(int argc , char **argv)
 
         cout << "start open " << endl;
 
+        manager.wifi_poweron(1);
+
+        sleep(3);
+
+
+        string mac;
+
+        manager.getLocalWifiMacInfo(mac);
+
+        cout << endl <<  "local mac info "<< mac << endl;
+
         do 
         {
             cout <<"=========================="<<endl;
@@ -47,10 +58,15 @@ int main(int argc , char **argv)
 
         cout << "start connect \n"<< endl;
 
-        manager.connectNetwork(string("OpenWrt"), string("18181818"));
+        manager.connectNetwork(string("HiWiFi_ZEASN"), string("zeasn87654321"));
+
+        cout << "slee 10 second "<< endl;
 
         sleep(10);
-        manager.getConfiguredNetWork();
+
+    netWorkItem connectedItem;
+    bool isConnected = manager.getConnectedItem(&connectedItem);
+        cout << "status  "<< isConnected << " ssid  "<< connectedItem.ssid <<endl;
 
         cout << "start disconnect \n"<< endl;
 
@@ -58,7 +74,7 @@ int main(int argc , char **argv)
 
         cout << "slee 10 second "<< endl;
 
-        manager.getConfiguredNetWork();
+        manager.wifi_poweron(0);
 
         sleep(10);
 

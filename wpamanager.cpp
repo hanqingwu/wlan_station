@@ -1,6 +1,8 @@
 #include "wpamanager.h"
 #include "wpa_ctrl.h"
 
+#include "wpaserviceutil.h"
+
 #include <dirent.h>
 
 
@@ -14,7 +16,6 @@
 #include <errno.h>
 #include <vector>
 
-#define varName(x) #x
 
 #define Debug(format, ...) do{      \
         printf(format, ##__VA_ARGS__);    \
@@ -38,21 +39,109 @@ WPAManager::WPAManager()
     ctrl_conn = NULL;
     ctrl_iface = NULL;
     monitor_conn = NULL;
+    power_state = 1;
 
     monitor_thread_id = 0;
+    control_thread_id = 0;
 
     ctrl_iface_dir = strdup("/var/run/wpa_supplicant");
 
+    /*
     if (openCtrlConnection(ctrl_iface) < 0) {
         Debug("Failed to open control connection to "
                "wpa_supplicant.");
     }
+    */
 }
 
 
 struct wpa_ctrl *WPAManager::get_monitor_conn()
 {
     return monitor_conn;
+}
+
+int WPAManager::ping()
+{
+    char buf[10];
+    size_t len;
+
+    if (ctrl_conn != NULL) {
+        return 0 ;
+    }
+
+    len = sizeof(buf) - 1;
+    if (ctrlRequest("PING", buf, &len) < 0) {
+        if (openCtrlConnection(ctrl_iface) >= 0) {
+            return 0;
+        }
+    }
+
+    return -1;
+}
+
+void *control_ping_process(void *arg)
+{
+    struct timeval  tv;
+    class WPAManager *manger = (class WPAManager * )arg;
+    
+    while(1)
+    {
+        
+        tv.tv_sec = 1;
+        tv.tv_usec = 0;
+
+        select(0, NULL,NULL,NULL,&tv);
+        manger->ping();
+    }
+
+   
+    Debug("%s exit ...\n", __FUNCTION__);
+
+    pthread_exit(NULL);
+
+    return NULL;
+}
+
+int WPAManager::wifi_poweron(int on)
+{
+    if (on)
+    {
+        wifi_start_supplicant();
+
+        if (openCtrlConnection("wlan0") < 0) {
+            Debug("Failed to open control connection to "
+                   "wpa_supplicant.");
+            
+            if (control_thread_id)
+            {
+                pthread_join(control_thread_id, NULL);
+                control_thread_id = 0;
+            }
+
+             //创建monitor线程
+            pthread_create(&control_thread_id, NULL, 
+                              control_ping_process, (void*)this);
+
+        }
+
+    }
+    else
+    {
+        if (control_thread_id)
+        {
+            pthread_join(control_thread_id, NULL);
+            control_thread_id = 0;
+        }
+
+        wifi_stop_supplicant();
+
+        closeWPAConnection();
+
+    }
+
+     power_state = on;
+
+    return 0;
 }
 
 void *monitor_process(void *arg)
@@ -72,7 +161,7 @@ void *monitor_process(void *arg)
     {
         FD_SET(fd,&rd);
         
-        tv.tv_sec = 1;
+        tv.tv_sec = 0;
         tv.tv_usec = 100000;
 
         err = select(fd + 1,&rd,NULL,NULL,&tv);
@@ -253,6 +342,8 @@ void WPAManager::processMsg(char *msg)
         scan();
     } else if (str_match(pos, WPA_EVENT_CONNECTED)) {
 //        emit sig_eventConnectComplete(getConnectedBSSIDFromMsg(pos));
+        Debug("%s receiveMsgs CONNECTED \n", __FUNCTION__);
+        get_IP_address();
         scan();
     } else if (str_match(pos, WPA_EVENT_DISCONNECTED)) {
 //        emit sig_eventDisconnected(getDisconnetedBSSIDFromMsg(pos));
@@ -317,7 +408,6 @@ list<netWorkItem>WPAManager::updateScanResult()
             break;
 
         reply[reply_len] = '\0';
-//        Debug("%s reply %s", __FUNCTION__, reply);
 
         string bss(reply);
         if (bss.empty() || strncmp(bss.c_str(), "FAIL",4) == 0)
@@ -329,7 +419,6 @@ list<netWorkItem>WPAManager::updateScanResult()
         SplitString(bss, lines, "\n");
 
         for (vector<string>::iterator it = lines.begin();it != lines.end(); it++) {
-
             size_t pos;
 
             if ((pos = (*it).find("bssid=")) != std::string::npos)
@@ -353,7 +442,6 @@ list<netWorkItem>WPAManager::updateScanResult()
             item.frequence = freq;
             item.signal = signal;
             item.flags = flags;
-
 
 //            Debug("push back ssid = %s \n", item.ssid.c_str());
             netWorksList.push_back(item);
@@ -382,6 +470,32 @@ void WPAManager::scan()
     ctrlRequest("SCAN", reply, &reply_len);
 }
 
+int WPAManager::getLocalWifiMacInfo(string &mac)
+{
+    FILE *fp;
+    char  lineStr[512];
+
+    fp = popen("cat /sys/class/net/wlan0/address","r");
+    if(fp != NULL)
+    {
+        if (fgets(lineStr,sizeof(lineStr),fp) != NULL)        
+        {
+            int len = strlen(lineStr);
+
+            if (len > 0 && lineStr[len -1] == '\n')
+            {
+                lineStr[len-1] = '\0';
+            }
+
+//            Debug("%s get mac [%s]\n", __FUNCTION__, lineStr);
+            mac = lineStr; 
+        }
+        pclose(fp);
+        return 0;
+    }
+
+    return -1;
+}
 
 int WPAManager::setNetworkParam(int id, const char *field,
                                 const char *value, bool quote)
@@ -408,7 +522,25 @@ void WPAManager::selectNetwork(const string &sel)
     scan();
 }
 
-int WPAManager::connectNetwork(const string &ssid, const string &password)
+
+
+int WPAManager::connectNetwork(int networkId)
+{
+    char reply[256], cmd[256];
+    size_t reply_len;
+    int id = networkId;
+
+    memset(reply, 0, sizeof(reply));
+    reply_len = sizeof(reply) - 1;
+
+    snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
+    ctrlRequest(cmd, reply, &reply_len);
+    Debug("ENABLE_NETWORK %d ret %s\n", id, reply);
+
+    return 0;
+}
+
+int WPAManager::connectNetwork(const string ssid, const string password)
 {
     char reply[256], cmd[256];
     size_t reply_len;
@@ -416,6 +548,19 @@ int WPAManager::connectNetwork(const string &ssid, const string &password)
 
     memset(reply, 0, sizeof(reply));
     reply_len = sizeof(reply) - 1;
+
+    //如果已配置，则删除
+    list<netWorkItem> networklist = getConfiguredNetWork();
+    for (list<netWorkItem>::iterator it = networklist.begin(); it != networklist.end(); it++)
+    {
+        if ( ssid.compare((*it).ssid) == 0 )
+        {
+            Debug("%s get same configed netowrk ssid %s\n", __FUNCTION__,ssid);
+            removeNetwork((*it).networkId);
+            break;
+        }
+    }
+    
 
     ctrlRequest("ADD_NETWORK", reply, &reply_len);
     if (reply[0] == 'F') {
@@ -429,7 +574,7 @@ int WPAManager::connectNetwork(const string &ssid, const string &password)
     setNetworkParam(id, "ssid", ssid.c_str(), true);
     setNetworkParam(id, "psk", password.c_str(), true);
 
-    selectNetwork(varName(id));
+    selectNetwork(std::to_string(id));
 
     snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
     ctrlRequest(cmd, reply, &reply_len);
@@ -453,12 +598,31 @@ void WPAManager::disconnectNetwork()
 
     ctrlRequest("DISCONNECT", reply, &reply_len);
     Debug("%s ret %s\n", __FUNCTION__, reply);
-/*    if (reply[0] == 'F') {
+    if (reply[0] == 'F') {
         Debug("error: failed to add network");
         return;
     }
-*/
+
     return;
+}
+
+int  WPAManager::removeNetwork(const string &ssid)
+{
+    int iRet = -1;
+
+    list<netWorkItem> networklist = getConfiguredNetWork();
+    for (list<netWorkItem>::iterator it = networklist.begin(); it != networklist.end(); it++)
+    {
+        if ( ssid.compare((*it).ssid) == 0 )
+        {
+            Debug("%s get same configed netowrk ssid %s\n", __FUNCTION__,ssid);
+            removeNetwork((*it).networkId);
+            iRet = 0;
+            break;
+        }
+    }
+
+    return iRet;
 }
 
 void WPAManager::removeNetwork(int networkId)
@@ -466,7 +630,7 @@ void WPAManager::removeNetwork(int networkId)
     char reply[10];
     size_t reply_len = sizeof(reply);
 
-    string cmd = string("REMOVE_NETWORK ") + string(varName(networkId));
+    string cmd = string("REMOVE_NETWORK ") + string(std::to_string(networkId));
     ctrlRequest(cmd.c_str(), reply, &reply_len);
 
     memset(reply, 0, sizeof(reply));
@@ -486,7 +650,6 @@ bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
     }
 
     Debug("%s get status %s\n", __FUNCTION__, buf);
-
 
     buf[len] = '\0';
     start = buf;
@@ -562,10 +725,12 @@ list<netWorkItem> WPAManager::getConfiguredNetWork()
         ssid = strchr(id, '\t');
         if (ssid == NULL)
             break;
+        
         *ssid++ = '\0';
         bssid = strchr(ssid, '\t');
         if (bssid == NULL)
             break;
+
         *bssid++ = '\0';
         flags = strchr(bssid, '\t');
         if (flags == NULL)
@@ -595,6 +760,7 @@ list<netWorkItem> WPAManager::getConfiguredNetWork()
 
         if (last)
             break;
+
         start = end + 1;
     }
 
