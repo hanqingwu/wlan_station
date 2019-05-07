@@ -18,11 +18,14 @@ using namespace std;
 
 int main(int argc , char **argv)
 {
+
+    int count = 0;
+
     do
     {
         WPAManager  manager;
 
-        cout << "start open " << endl;
+        cout << "*********************start open count  "<<count++ <<"***********************"<< endl;
 
         manager.wifi_poweron(1);
 
@@ -37,7 +40,7 @@ int main(int argc , char **argv)
 
         do 
         {
-            cout <<"=========================="<<endl;
+//            cout <<"=========================="<<endl;
 
             list<netWorkItem>  networklist = manager.get_avail_wireless_network();
 

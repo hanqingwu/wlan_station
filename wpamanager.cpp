@@ -211,8 +211,6 @@ void *monitor_process(void *arg)
             break;
         }
 
-
-
     }
 
     pthread_mutex_destroy(&manger->monitor_thread_exit_mutex);
@@ -283,6 +281,13 @@ int WPAManager::openCtrlConnection(const char *ifname)
         ctrl_conn = NULL;
     }
 
+    if (monitor_thread_id)
+    {
+        pthread_mutex_unlock(&monitor_thread_exit_mutex);
+        pthread_join(monitor_thread_id, NULL);
+        monitor_thread_id = 0;
+    }
+
     if (monitor_conn) {
         wpa_ctrl_detach(monitor_conn);
         wpa_ctrl_close(monitor_conn);
@@ -290,13 +295,6 @@ int WPAManager::openCtrlConnection(const char *ifname)
 
     }
 
-
-    if (monitor_thread_id)
-    {
-        pthread_mutex_unlock(&monitor_thread_exit_mutex);
-        pthread_join(monitor_thread_id, NULL);
-        monitor_thread_id = 0;
-    }
 
     ctrl_conn = wpa_ctrl_open(cfile);
     if (ctrl_conn == NULL) {
@@ -567,6 +565,8 @@ int WPAManager::connectNetwork(int networkId)
     memset(reply, 0, sizeof(reply));
     reply_len = sizeof(reply) - 1;
 
+    selectNetwork(std::to_string(id));
+
     snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
     ctrlRequest(cmd, reply, &reply_len);
     Debug("ENABLE_NETWORK %d ret %s\n", id, reply);
@@ -574,7 +574,7 @@ int WPAManager::connectNetwork(int networkId)
     return 0;
 }
 
-int WPAManager::connectNetwork(const string ssid, const string password)
+int WPAManager::connectNetwork(const string ssid, const string password, int security )
 {
     char reply[256], cmd[256];
     size_t reply_len;
@@ -596,6 +596,35 @@ int WPAManager::connectNetwork(const string ssid, const string password)
     }
     
 
+    //从扫描结果里查找对应security
+    if (security == WIFI_SECURITY_UNKNOWN)
+    {
+        list<netWorkItem> scanlist = updateScanResult();
+        for (list<netWorkItem>::iterator it = scanlist.begin(); it != scanlist.end(); it++)
+        {
+            if ( ssid.compare((*it).ssid) == 0 )
+            {
+                if ( (*it).flags.find("WEP")  != string::npos )
+                {
+                    security = WIFI_SECURITY_WEP;
+                }
+                else if ((*it).flags.find("PSK") != string::npos)
+                {
+                    security = WIFI_SECURITY_PSK;
+                }
+                else 
+                {
+                    security = WIFI_SECURITY_NONE;
+                }
+
+                break;
+
+            }
+
+        }
+    }
+
+
     ctrlRequest("ADD_NETWORK", reply, &reply_len);
     if (reply[0] == 'F') {
         Debug("error: failed to add network");
@@ -606,7 +635,19 @@ int WPAManager::connectNetwork(const string ssid, const string password)
     Debug("ADD_NETWORK get %d\n", id);
 
     setNetworkParam(id, "ssid", ssid.c_str(), true);
-    setNetworkParam(id, "psk", password.c_str(), true);
+    if (security == WIFI_SECURITY_NONE || password.empty())
+    {
+        setNetworkParam(id, "key_mgmt", "NONE", false);
+    }
+    else if (security == WIFI_SECURITY_PSK)
+    {
+        setNetworkParam(id, "psk", password.c_str(), true);
+    }
+    else if (security == WIFI_SECURITY_WEP)
+    {
+        setNetworkParam(id, "key_mgmt", "NONE", false);
+        setNetworkParam(id, "key_psk0", password.c_str(), true);
+    }
 
     selectNetwork(std::to_string(id));
 
@@ -802,18 +843,21 @@ list<netWorkItem> WPAManager::getConfiguredNetWork()
 
 void WPAManager::closeWPAConnection()
 {
+    if (monitor_thread_id)
+    {
+        Debug("wait monitor thread exit ...\n ");
+        pthread_mutex_unlock(&monitor_thread_exit_mutex);
+        pthread_join(monitor_thread_id, NULL);
+        Debug("monotor thre  exit ok \n");
+        monitor_thread_id = 0;
+    }
+
     if (monitor_conn) {
         wpa_ctrl_detach(monitor_conn);
         wpa_ctrl_close(monitor_conn);
         monitor_conn = NULL;
     }
 
-    if (monitor_thread_id)
-    {
-        pthread_mutex_unlock(&monitor_thread_exit_mutex);
-        pthread_join(monitor_thread_id, NULL);
-        monitor_thread_id = 0;
-    }
    
     if (ctrl_conn) {
         wpa_ctrl_close(ctrl_conn);

@@ -11,6 +11,13 @@ using  std::string;
 using  std::list;
 
 #define CTRL_EVENT_CONNECTING "Trying to associate with"
+enum Wifi_Security
+{
+    WIFI_SECURITY_UNKNOWN = 0,
+    WIFI_SECURITY_NONE,
+    WIFI_SECURITY_WEP,
+    WIFI_SECURITY_PSK
+};
 
 enum WifiState {
     WIFI_STATE_NULL = 0,
@@ -45,7 +52,7 @@ public:
     list<netWorkItem> get_avail_wireless_network();
 
     //连接WIFI或断开
-    int connectNetwork(const string ssid, const string password);
+    int connectNetwork(const string ssid, const string password, int security = 0);
     int connectNetwork(int networkId);
     void disconnectNetwork();
 
