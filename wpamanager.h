@@ -71,7 +71,7 @@ public:
     void receiveMsgs();
 
     int ping();
-
+    int set_status_callback(int (*status_change)(int status));
 
     pthread_mutex_t  monitor_thread_exit_mutex;
     pthread_mutex_t  control_thread_exit_mutex;
@@ -80,6 +80,8 @@ private:
     static WPAManager *_instance;
 
     int power_state;
+
+    int (*status_change)(int status);
 
     int ctrlRequest(const char *cmd, char *buf, size_t *buflen);
 
@@ -124,6 +126,8 @@ private:
     //启动控制
     int openCtrlConnection(const char *ifname);
 
+    //
+    void save_config();
 
 };
 

@@ -45,6 +45,8 @@ WPAManager::WPAManager()
     monitor_thread_id = 0;
     control_thread_id = 0;
 
+    status_change = NULL;
+
     ctrl_iface_dir = strdup("/var/run/wpa_supplicant");
 
     /*
@@ -122,7 +124,7 @@ int WPAManager::wifi_poweron(int on)
 
         if (openCtrlConnection("wlan0") < 0) {
             Debug("Failed to open control connection to "
-                   "wpa_supplicant.");
+                   "wpa_supplicant.\n");
             
             if (control_thread_id)
             {
@@ -256,7 +258,7 @@ int WPAManager::openCtrlConnection(const char *ifname)
                 if (strncmp(dent->d_name, "p2p",3 ) == 0)
                     continue;
 
-                Debug("Selected interface '%s'",
+                Debug("Selected interface '%s' \n",
                        dent->d_name);
                 ctrl_iface = strdup(dent->d_name);
                 break;
@@ -309,7 +311,7 @@ int WPAManager::openCtrlConnection(const char *ifname)
         goto _exit_failed;
     }
     if (wpa_ctrl_attach(monitor_conn)) {
-        Debug("Failed to attach to wpa_supplicant");
+        Debug("Failed to attach to wpa_supplicant \n");
         wpa_ctrl_close(monitor_conn);
         monitor_conn = NULL;
         wpa_ctrl_close(ctrl_conn);
@@ -363,23 +365,25 @@ void WPAManager::processMsg(char *msg)
         pos2 = pos;
 
     string lastmsg = pos2;
-//    lastmsg.truncate(40);
 
     if (str_match(pos, WPA_EVENT_SCAN_RESULTS)) {
         updateScanResult();
-    } else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
- //       emit sig_eventConnecting(getConnectingSSIDFromMsg(pos));
-    } else if (str_match(pos, WPA_EVENT_TEMP_DISABLED)) {
-//        emit sig_eventConnectFail(getFailedSSIDFromMsg(pos));
-        scan();
+    } 
+    /*else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
+    } 
+    */else if (str_match(pos, WPA_EVENT_TEMP_DISABLED)) {
+    //    scan();
     } else if (str_match(pos, WPA_EVENT_CONNECTED)) {
-//        emit sig_eventConnectComplete(getConnectedBSSIDFromMsg(pos));
-        Debug("%s receiveMsgs CONNECTED \n", __FUNCTION__);
+        Debug("******** receiveMsgs CONNECTED **********\n", __FUNCTION__);
         get_IP_address();
-        scan();
+        if (status_change)
+            status_change(1);
+   //     scan();
     } else if (str_match(pos, WPA_EVENT_DISCONNECTED)) {
-//        emit sig_eventDisconnected(getDisconnetedBSSIDFromMsg(pos));
-        scan();
+        Debug("******** receiveMsgs DISCONNECTED ********* \n", __FUNCTION__);
+        if (status_change)
+            status_change(0);
+   //     scan();
     }
 }
 
@@ -393,7 +397,7 @@ void WPAManager::receiveMsgs()
         if (wpa_ctrl_recv(monitor_conn, buf, &len) == 0) {
             buf[len] = '\0';
 
-            Debug("%s recv %s\n", __FUNCTION__, buf);
+//            Debug("%s recv %s\n", __FUNCTION__, buf);
             
             processMsg(buf);
         }
@@ -495,6 +499,11 @@ list<netWorkItem> WPAManager::get_avail_wireless_network()
     return updateScanResult();
 }
 
+int WPAManager::set_status_callback(int (*status_change_notify)(int status ))
+{
+    status_change = status_change_notify;
+}
+
 void WPAManager::scan()
 {
     char reply[10];
@@ -536,6 +545,7 @@ int WPAManager::setNetworkParam(int id, const char *field,
     size_t reply_len;
     snprintf(cmd, sizeof(cmd), "SET_NETWORK %d %s %s%s%s",
              id, field, quote ? "\"" : "", value, quote ? "\"" : "");
+    memset(reply, 0, sizeof(reply));
     reply_len = sizeof(reply);
     ctrlRequest(cmd, reply, &reply_len);
 
@@ -551,7 +561,7 @@ void WPAManager::selectNetwork(const string &sel)
     size_t reply_len = sizeof(reply);
 
     ctrlRequest(cmd.c_str(), reply, &reply_len);
-    scan();
+    //scan();
 }
 
 
@@ -580,8 +590,6 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
     size_t reply_len;
     int id;
 
-    memset(reply, 0, sizeof(reply));
-    reply_len = sizeof(reply) - 1;
 
     //如果已配置，则删除
     list<netWorkItem> networklist = getConfiguredNetWork();
@@ -624,7 +632,8 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
         }
     }
 
-
+    memset(reply, 0, sizeof(reply));
+    reply_len = sizeof(reply) - 1;
     ctrlRequest("ADD_NETWORK", reply, &reply_len);
     if (reply[0] == 'F') {
         Debug("error: failed to add network");
@@ -649,18 +658,25 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
         setNetworkParam(id, "key_psk0", password.c_str(), true);
     }
 
-    selectNetwork(std::to_string(id));
+    connectNetwork(id);
 
-    snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
-    ctrlRequest(cmd, reply, &reply_len);
-    Debug("ENABLE_NETWORK %d ret %s\n", id, reply);
+    save_config();
 
-    memset(reply, 0, sizeof(reply));
-    ctrlRequest("SAVE_CONFIG", reply, &reply_len);
-    Debug("SAVE_CONFIG  ret %s\n", reply);
     return id;
 }
 
+void WPAManager::save_config()
+{
+    char reply[256];
+    size_t reply_len;
+
+    memset(reply, 0, sizeof(reply));
+    reply_len = sizeof(reply) - 1;
+
+    ctrlRequest("SAVE_CONFIG", reply, &reply_len);
+    Debug("SAVE_CONFIG  ret %s\n", reply);
+
+}
 
 void WPAManager::disconnectNetwork()
 {
@@ -673,7 +689,7 @@ void WPAManager::disconnectNetwork()
 
     ctrlRequest("DISCONNECT", reply, &reply_len);
     if (reply[0] == 'F') {
-        Debug("error: failed to add network");
+        Debug("error: failed to disconnect  network");
         return;
     }
 
@@ -707,9 +723,7 @@ void WPAManager::removeNetwork(int networkId)
     string cmd = string("REMOVE_NETWORK ") + string(std::to_string(networkId));
     ctrlRequest(cmd.c_str(), reply, &reply_len);
 
-    memset(reply, 0, sizeof(reply));
-    ctrlRequest("SAVE_CONFIG", reply, &reply_len);
-    scan();
+    save_config();
 }
 
 bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
@@ -723,7 +737,7 @@ bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
         return false;
     }
 
-    Debug("%s get status %s\n", __FUNCTION__, buf);
+//    Debug("%s get status %s\n", __FUNCTION__, buf);
 
     buf[len] = '\0';
     start = buf;

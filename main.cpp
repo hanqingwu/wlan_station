@@ -15,6 +15,12 @@
 using std::vector;
 using namespace std;
 
+int status_notify(int status)
+{
+    cout << "!!!!!! status _notify " << status << " !!!!!!!!" <<endl;
+
+    return 0;
+}
 
 int main(int argc , char **argv)
 {
@@ -54,18 +60,20 @@ int main(int argc , char **argv)
                 cout << "flags "<< (*it).flags << endl;
  */           }
 
-            sleep(3);
+         //   sleep(3);
 
         }
         while(0);
 
         cout << "start connect \n"<< endl;
 
+        manager.set_status_callback(status_notify);
+
         manager.connectNetwork(string("HiWiFi_ZEASN"), string("zeasn87654321"));
 
-        cout << "slee 10 second "<< endl;
+        cout << "slee 5 second "<< endl;
 
-        sleep(10);
+        sleep(5);
 
     netWorkItem connectedItem;
     bool isConnected = manager.getConnectedItem(&connectedItem);
@@ -76,11 +84,11 @@ int main(int argc , char **argv)
 
         manager.disconnectNetwork();
 
-        cout << "slee 10 second "<< endl;
+        cout << "slee 5 second "<< endl;
 
         manager.wifi_poweron(0);
 
-        sleep(10);
+        sleep(5);
 
 
     }while(1);
