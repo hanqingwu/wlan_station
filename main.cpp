@@ -44,6 +44,11 @@ int main(int argc , char **argv)
 
         cout << endl <<  "local mac info "<< mac << endl;
 
+        manager.scan();
+
+        sleep(5);
+
+#if 0        
         do 
         {
 //            cout <<"=========================="<<endl;
@@ -64,6 +69,7 @@ int main(int argc , char **argv)
 
         }
         while(0);
+#endif
 
         cout << "start connect \n"<< endl;
 

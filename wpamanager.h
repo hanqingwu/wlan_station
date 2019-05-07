@@ -16,7 +16,9 @@ enum Wifi_Security
     WIFI_SECURITY_UNKNOWN = 0,
     WIFI_SECURITY_NONE,
     WIFI_SECURITY_WEP,
-    WIFI_SECURITY_PSK
+    WIFI_SECURITY_PSK,
+    WIFI_SECURITY_802DOT1X_EAP
+
 };
 
 enum WifiState {
@@ -69,6 +71,9 @@ public:
     //监听线程使用
     struct wpa_ctrl *get_monitor_conn();
     void receiveMsgs();
+   
+    //扫描启动
+    void scan();
 
     int ping();
     int set_status_callback(int (*status_change)(int status));
@@ -108,9 +113,7 @@ private:
     //处理监听返回结果
     void processMsg(char *msg);
     
-    //扫描启动
-    void scan();
-
+    
     //获取已配置的网络
     list<netWorkItem> getConfiguredNetWork();
 

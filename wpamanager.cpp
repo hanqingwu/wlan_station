@@ -367,6 +367,7 @@ void WPAManager::processMsg(char *msg)
     string lastmsg = pos2;
 
     if (str_match(pos, WPA_EVENT_SCAN_RESULTS)) {
+        Debug("******** receiveMsgs SCAN_RESULT **********\n", __FUNCTION__);
         updateScanResult();
     } 
     /*else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
@@ -479,7 +480,7 @@ list<netWorkItem>WPAManager::updateScanResult()
             item.signal = signal;
             item.flags = flags;
 
-//            Debug("push back ssid = %s \n", item.ssid.c_str());
+            Debug("push back ssid = %s \n", item.ssid.c_str());
             netWorksList.push_back(item);
         }
 
@@ -620,7 +621,11 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
                 {
                     security = WIFI_SECURITY_PSK;
                 }
-                else 
+                else if ((*it).flags.find("EAP") != string::npos)
+                {
+                    security = WIFI_SECURITY_802DOT1X_EAP;
+                }
+                else
                 {
                     security = WIFI_SECURITY_NONE;
                 }
@@ -656,6 +661,12 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
     {
         setNetworkParam(id, "key_mgmt", "NONE", false);
         setNetworkParam(id, "key_psk0", password.c_str(), true);
+    }
+    else if (security == WIFI_SECURITY_802DOT1X_EAP)
+    {
+        setNetworkParam(id, "key_mgmt", "WPA-EAP IEEE8021X", true);
+        setNetworkParam(id, "password", password.c_str(), true);
+
     }
 
     connectNetwork(id);
