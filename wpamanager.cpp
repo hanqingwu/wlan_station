@@ -370,21 +370,21 @@ void WPAManager::processMsg(char *msg)
         Debug("******** receiveMsgs SCAN_RESULT **********\n", __FUNCTION__);
         updateScanResult();
     } 
-    /*else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
+    else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
+        Debug("******** receiveMsgs ENENT CONNECTING  **********\n", __FUNCTION__);
     } 
-    */else if (str_match(pos, WPA_EVENT_TEMP_DISABLED)) {
-    //    scan();
+    else if (str_match(pos, WPA_EVENT_TEMP_DISABLED)) {
+        //KEY ERROR
+        Debug("******** receiveMsgs TEMP  DISABLED  EVENT  Maybe KEY ERROR**********\n", __FUNCTION__);
     } else if (str_match(pos, WPA_EVENT_CONNECTED)) {
         Debug("******** receiveMsgs CONNECTED **********\n", __FUNCTION__);
         get_IP_address();
         if (status_change)
             status_change(1);
-   //     scan();
     } else if (str_match(pos, WPA_EVENT_DISCONNECTED)) {
         Debug("******** receiveMsgs DISCONNECTED ********* \n", __FUNCTION__);
         if (status_change)
             status_change(0);
-   //     scan();
     }
 }
 
@@ -398,7 +398,7 @@ void WPAManager::receiveMsgs()
         if (wpa_ctrl_recv(monitor_conn, buf, &len) == 0) {
             buf[len] = '\0';
 
-//            Debug("%s recv %s\n", __FUNCTION__, buf);
+            Debug("%s recv %s\n", __FUNCTION__, buf);
             
             processMsg(buf);
         }
@@ -562,7 +562,6 @@ void WPAManager::selectNetwork(const string &sel)
     size_t reply_len = sizeof(reply);
 
     ctrlRequest(cmd.c_str(), reply, &reply_len);
-    //scan();
 }
 
 

@@ -75,11 +75,11 @@ int main(int argc , char **argv)
 
         manager.set_status_callback(status_notify);
 
-        manager.connectNetwork(string("HiWiFi_ZEASN"), string("zeasn87654321"));
+        manager.connectNetwork(string("HiWiFi_ZEASN"), string("zeasn876543"));
 
-        cout << "slee 5 second "<< endl;
+        cout << "slee 15 second "<< endl;
 
-        sleep(5);
+        sleep(15);
 
     netWorkItem connectedItem;
     bool isConnected = manager.getConnectedItem(&connectedItem);
