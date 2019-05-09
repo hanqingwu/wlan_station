@@ -40,9 +40,8 @@ int main(int argc , char **argv)
 
         string mac;
 
-        manager.getLocalWifiMacInfo(mac);
 
-        cout << endl <<  "local mac info "<< mac << endl;
+//        cout << endl <<  "local mac info "<< mac << endl;
 
         manager.scan();
 
@@ -75,9 +74,23 @@ int main(int argc , char **argv)
 
         manager.set_status_callback(status_notify);
 
-        manager.connectNetwork(string("HiWiFi_ZEASN"), string("zeasn876543"));
+        manager.connectNetwork(string("HiWiFi_ZEASN"), string("zeasn87654321"));
 
         cout << "slee 15 second "<< endl;
+        string strMac, strMacsk ,strGateway, strDns, strBakDns;
+
+        manager.getMacInfo(strMac);
+        cout << "get Mac "<< strMac << endl;
+
+        manager.getMaskInfo(strMacsk);
+        cout << "get mack " << strMacsk << endl;
+
+        manager.getGateway(strGateway);
+        cout << "get Gateway " << strGateway << endl;
+
+        manager.getDns(strDns, strBakDns);
+        cout << "get Dns "<< strDns << "Bak Dns "<< strBakDns << endl;
+        
 
         sleep(15);
 

@@ -17,6 +17,20 @@
 #include <errno.h>
 #include <vector>
 
+#include <stdlib.h>
+#include <string.h>
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <netinet/ip.h>
+#include <netinet/ether.h>
+#include <net/if.h>
+#include <arpa/inet.h>
+#include <net/if_arp.h>
+#include <sys/ioctl.h>
+#include <string.h>
+#include <errno.h>
+#include <net/route.h>
 
 #define Debug(format, ...) do{      \
         printf(format, ##__VA_ARGS__);    \
@@ -24,6 +38,37 @@
 } while(0)
 
 using std::vector;
+using std::string;
+
+
+char *get_popen_result(const char *cmd)
+{
+    FILE *fp;
+    char  lineStr[512];
+
+    fp = popen(cmd, "r");
+    if(fp != NULL)
+    {
+        if (fgets(lineStr,sizeof(lineStr),fp) != NULL)        
+        {
+            int len = strlen(lineStr);
+
+            if (len > 0 && lineStr[len -1] == '\n')
+            {
+                lineStr[len-1] = '\0';
+            }
+
+      //      Debug("%s cmd  %s get [%s]\n", __FUNCTION__, cmd, lineStr);
+
+            pclose(fp);
+            return strdup(lineStr);
+        }
+        pclose(fp);
+        return NULL;
+    }
+
+    return NULL;
+}
 
 WPAManager *WPAManager::_instance = NULL;
 
@@ -46,8 +91,14 @@ WPAManager::WPAManager()
     control_thread_id = 0;
 
     status_change = NULL;
+    scanCallBack = NULL;
+    connectCallBack = NULL;
+
+    dhcp_enable = 1;
 
     ctrl_iface_dir = strdup("/var/run/wpa_supplicant");
+
+    pthread_mutex_init(&apListResult_mutex,NULL);
 
     /*
     if (openCtrlConnection(ctrl_iface) < 0) {
@@ -97,7 +148,7 @@ void *control_ping_process(void *arg)
         select(0, NULL,NULL,NULL,&tv);
 
         ret = manger->ping();
-        Debug("%s ret %d\n",__FUNCTION__, ret );
+//        Debug("%s ret %d\n",__FUNCTION__, ret );
 
         if (pthread_mutex_trylock(&manger->control_thread_exit_mutex) == 0)
         {
@@ -370,21 +421,32 @@ void WPAManager::processMsg(char *msg)
         Debug("******** receiveMsgs SCAN_RESULT **********\n", __FUNCTION__);
         updateScanResult();
     } 
-    else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
-        Debug("******** receiveMsgs ENENT CONNECTING  **********\n", __FUNCTION__);
+    /*else if (str_match(pos, CTRL_EVENT_CONNECTING)) {
     } 
-    else if (str_match(pos, WPA_EVENT_TEMP_DISABLED)) {
-        //KEY ERROR
-        Debug("******** receiveMsgs TEMP  DISABLED  EVENT  Maybe KEY ERROR**********\n", __FUNCTION__);
+    */else if (str_match(pos, WPA_EVENT_TEMP_DISABLED)) {
+        //KEY 错误
+        if (connectCallBack)
+            connectCallBack(-1);
+
     } else if (str_match(pos, WPA_EVENT_CONNECTED)) {
         Debug("******** receiveMsgs CONNECTED **********\n", __FUNCTION__);
-        get_IP_address();
+
+        if (dhcp_enable)
+            get_IP_address();
+
         if (status_change)
             status_change(1);
+
+        if (connectCallBack)
+            connectCallBack(1);
+
     } else if (str_match(pos, WPA_EVENT_DISCONNECTED)) {
         Debug("******** receiveMsgs DISCONNECTED ********* \n", __FUNCTION__);
         if (status_change)
             status_change(0);
+
+        if (connectCallBack)
+            connectCallBack(0);
     }
 }
 
@@ -398,7 +460,7 @@ void WPAManager::receiveMsgs()
         if (wpa_ctrl_recv(monitor_conn, buf, &len) == 0) {
             buf[len] = '\0';
 
-            Debug("%s recv %s\n", __FUNCTION__, buf);
+//            Debug("%s recv %s\n", __FUNCTION__, buf);
             
             processMsg(buf);
         }
@@ -432,7 +494,18 @@ list<netWorkItem>WPAManager::updateScanResult()
     int index;
     char cmd[20];
 
-    list<netWorkItem> netWorksList;
+    pthread_mutex_lock(&apListResult_mutex);
+
+    apListResult.clear();
+/*
+    //清空apListResult
+    for (list<netWorkItem>::iterator it = apListResult.begin(); it != apListResult.end(); )
+    {
+        apListResult.erase(it);
+    }
+*/
+
+    pthread_mutex_unlock(&apListResult_mutex);
 
     index = 0;
     while (true) {
@@ -451,8 +524,10 @@ list<netWorkItem>WPAManager::updateScanResult()
             break;
 
         string ssid, bssid, freq, signal, flags;
-        vector<string> lines;
 
+        int status, level, security, mode, maxSpeed;
+
+        vector<string> lines;
         SplitString(bss, lines, "\n");
 
         for (vector<string>::iterator it = lines.begin();it != lines.end(); it++) {
@@ -460,12 +535,33 @@ list<netWorkItem>WPAManager::updateScanResult()
 
             if ((pos = (*it).find("bssid=")) != std::string::npos)
                 bssid = (*it).substr(pos + strlen("bssid="));
-            else if ((pos = (*it).find("freq=")) != std::string::npos)
+/*            else if ((pos = (*it).find("freq=")) != std::string::npos)
                 freq = (*it).substr(pos + strlen("freq="));
-            else if ((pos = (*it).find("level=")) != std::string::npos)
+*/          else if ((pos = (*it).find("level=")) != std::string::npos)
+            {
                 signal = (*it).substr(pos + strlen("level="));
+                level = atoi(signal.c_str());
+            }
             else if ((pos = (*it).find("flags=")) != std::string::npos)
+            {
                 flags = (*it).substr(pos + strlen("flags="));
+                if (flags.find("PSK") != std::string::npos)
+                {
+                    security = WIFI_SECURITY_PSK;
+                }
+                else if (flags.find("WEP") != std::string::npos)
+                {
+                    security = WIFI_SECURITY_WEP;
+                }
+                else if (flags.find("IEEE8021X") != std::string::npos)
+                {
+                    security = WIFI_SECURITY_802DOT1X_EAP;
+                }
+                else
+                {
+                    security = WIFI_SECURITY_NONE;
+                }
+            }
             else if ((pos = (*it).find("ssid=")) != std::string::npos)
                 ssid = (*it).substr(pos +strlen("ssid="));
 
@@ -474,23 +570,43 @@ list<netWorkItem>WPAManager::updateScanResult()
         if (!ssid.empty())
         {
             netWorkItem item;
+            
+            item.status = WIFI_STATUS_ENABLED;
+            item.level = level;
+            item.security = security;
+            item.mode = 2;   //ap_mode
+            item.maxSpeed = 0;
+
             item.ssid = ssid;
             item.bssid = bssid;
             item.frequence = freq;
             item.signal = signal;
             item.flags = flags;
 
-            Debug("push back ssid = %s \n", item.ssid.c_str());
-            netWorksList.push_back(item);
+//            Debug("push back ssid = %s \n", item.ssid.c_str());
+
+            pthread_mutex_lock(&apListResult_mutex);
+            apListResult.push_back(item);
+            pthread_mutex_unlock(&apListResult_mutex);
+
         }
 
         if (bssid.empty())
             break;
     }
 
-    //发送消息?
-    //
-    return netWorksList;
+    //回调给soc
+    if (scanCallBack)
+    {
+        scanCallBack();        
+    }
+
+    return apListResult;
+}
+
+list<netWorkItem> WPAManager::getWifiListInfo()
+{
+    return  apListResult;
 }
 
 list<netWorkItem> WPAManager::get_avail_wireless_network()
@@ -499,6 +615,201 @@ list<netWorkItem> WPAManager::get_avail_wireless_network()
 
     return updateScanResult();
 }
+
+int WPAManager::getLocalIpInfo(std::string &strOut)
+{
+    int sock_get_ip;
+    char ipaddr[50];
+
+    struct   sockaddr_in *sin;
+    struct   ifreq ifr_ip;
+
+    if ((sock_get_ip=socket(AF_INET, SOCK_STREAM, 0)) == -1)
+    {
+        Debug("socket create failse...GetLocalIp!\n");
+        return  -1;
+    }
+
+    memset(&ifr_ip, 0, sizeof(ifr_ip));
+    strncpy(ifr_ip.ifr_name, "wlan0", sizeof(ifr_ip.ifr_name) - 1);
+
+    if( ioctl( sock_get_ip, SIOCGIFADDR, &ifr_ip) < 0 )
+    {
+        close(sock_get_ip);
+        return -1;
+    }
+    sin = (struct sockaddr_in *)&ifr_ip.ifr_addr;
+    strcpy(ipaddr,inet_ntoa(sin->sin_addr));
+
+//    Debug("local  wlan0 ip:%s \n",ipaddr);
+    close( sock_get_ip );
+
+    strOut.assign(ipaddr);
+
+    return 0;
+}
+
+int WPAManager::getMaskInfo(std::string &strOut)
+{
+    int sock_netmask;
+    char netmask_addr[50];
+
+    struct ifreq ifr_mask;
+    struct sockaddr_in *net_mask;
+
+    sock_netmask = socket( AF_INET, SOCK_STREAM, 0 );
+    if( sock_netmask == -1)
+    {
+        Debug("create socket failture...GetLocalNetMask\n");
+        return  -1;
+    }
+
+    memset(&ifr_mask, 0, sizeof(ifr_mask));
+    strncpy(ifr_mask.ifr_name, "wlan0", sizeof(ifr_mask.ifr_name )-1);
+
+    if( (ioctl( sock_netmask, SIOCGIFNETMASK, &ifr_mask ) ) < 0 )
+    {
+       Debug("Mask ioctl error, %s n", strerror(errno));
+       close( sock_netmask );
+       return -1;
+    }
+
+    net_mask = ( struct sockaddr_in * )&( ifr_mask.ifr_netmask );
+    strcpy( netmask_addr, inet_ntoa( net_mask -> sin_addr ) );
+
+//    Debug("local netmask:%s\n",netmask_addr);
+
+    close( sock_netmask );
+    strOut.assign(netmask_addr);
+
+    return 0 ;
+}
+
+
+int WPAManager::getMacInfo(std::string &strOut)
+{
+    int sock_mac;
+
+    struct ifreq ifr_mac;
+    char mac_addr[30];
+
+    sock_mac = socket( AF_INET, SOCK_STREAM, 0 );
+    if( sock_mac == -1)
+    {
+        Debug("create socket falise...mac\n");
+        return -1;
+    }
+
+    memset(&ifr_mac,0,sizeof(ifr_mac));
+    strncpy(ifr_mac.ifr_name, "wlan0", sizeof(ifr_mac.ifr_name)-1);
+
+    if( (ioctl( sock_mac, SIOCGIFHWADDR, &ifr_mac)) < 0)
+    {
+        Debug("mac ioctl error \n");
+        close(sock_mac);
+        return -1;
+    }
+
+    sprintf(mac_addr,"%02X:%02X:%02X:%02X:%02X:%02X",
+        (unsigned char)ifr_mac.ifr_hwaddr.sa_data[0],
+        (unsigned char)ifr_mac.ifr_hwaddr.sa_data[1],
+        (unsigned char)ifr_mac.ifr_hwaddr.sa_data[2],
+        (unsigned char)ifr_mac.ifr_hwaddr.sa_data[3],
+        (unsigned char)ifr_mac.ifr_hwaddr.sa_data[4],
+        (unsigned char)ifr_mac.ifr_hwaddr.sa_data[5]);
+
+//    Debug("local mac:%s \n",mac_addr);
+
+    close( sock_mac );
+    strOut.assign(mac_addr);
+
+    return 0;
+}
+
+int WPAManager::getGateway(std::string &strOut)
+{
+    char *result = get_popen_result("ip route | grep default | grep  wlan0 | awk '{print $3}'");
+    if (result != NULL)
+    {
+        strOut.assign(result);
+        free(result);
+        return 0;
+    }
+
+    return -1;
+}
+
+int WPAManager::getMaxSpeed()
+{
+    char *result = get_popen_result("iw dev wlan0 link | grep \"tx bitrate\" | awk '{print $3}'");
+    int iRet = -1;
+
+    if (result != NULL)
+    {
+        iRet = atoi(result) * 1000 * 1000;
+        free(result);
+    }
+
+    return iRet;
+}
+
+int WPAManager::setLocalDns(std::string strDns, std::string strBakDns)
+{
+    char cmd[256];
+
+    if (!strDns.empty())
+    {
+        snprintf(cmd, sizeof(cmd), "echo \"nameserver %s\" > /etc/resolv.conf ", strDns.c_str());
+        system(cmd);
+    }
+
+    if (!strBakDns.empty())
+    {
+        snprintf(cmd, sizeof(cmd), "echo \"nameserver %s\" >> /etc/resolv.conf ", strBakDns.c_str());
+        system(cmd);
+    }
+
+    return 0;
+}
+
+int WPAManager::getDns(std::string &strOut, std::string & strBakDns)
+{
+    FILE *fp;
+    char  lineStr[512];
+    int count = 0;
+
+    fp = popen("cat /etc/resolv.conf | grep nameserver | awk '{print $2}'", "r");
+    if(fp != NULL)
+    {
+        while (fgets(lineStr,sizeof(lineStr),fp) != NULL)        
+        {
+            int len = strlen(lineStr);
+
+
+            if (len > 0 && lineStr[len -1] == '\n')
+            {
+                lineStr[len-1] = '\0';
+            }
+
+            if (count == 0)
+                strOut.assign(lineStr);
+            else if (count == 1)
+            {
+                strBakDns.assign(lineStr);
+                break;
+            }
+
+            count ++;
+
+        }
+        pclose(fp);
+        return 0;
+    }
+
+    return -1;
+
+}
+
 
 int WPAManager::set_status_callback(int (*status_change_notify)(int status ))
 {
@@ -512,6 +823,7 @@ void WPAManager::scan()
     ctrlRequest("SCAN", reply, &reply_len);
 }
 
+#if 0
 int WPAManager::getLocalWifiMacInfo(string &mac)
 {
     FILE *fp;
@@ -538,6 +850,7 @@ int WPAManager::getLocalWifiMacInfo(string &mac)
 
     return -1;
 }
+#endif
 
 int WPAManager::setNetworkParam(int id, const char *field,
                                 const char *value, bool quote)
@@ -565,26 +878,7 @@ void WPAManager::selectNetwork(const string &sel)
 }
 
 
-
-int WPAManager::connectNetwork(int networkId)
-{
-    char reply[256], cmd[256];
-    size_t reply_len;
-    int id = networkId;
-
-    memset(reply, 0, sizeof(reply));
-    reply_len = sizeof(reply) - 1;
-
-    selectNetwork(std::to_string(id));
-
-    snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
-    ctrlRequest(cmd, reply, &reply_len);
-    Debug("ENABLE_NETWORK %d ret %s\n", id, reply);
-
-    return 0;
-}
-
-int WPAManager::connectNetwork(const string ssid, const string password, int security )
+int WPAManager::addNetwork(const string ssid, const string password, int security )
 {
     char reply[256], cmd[256];
     size_t reply_len;
@@ -597,17 +891,17 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
     {
         if ( ssid.compare((*it).ssid) == 0 )
         {
-            Debug("%s get same configed netowrk ssid %s\n", __FUNCTION__,ssid);
+            Debug("%s get same configed netowrk ssid%s, id =%d\n", __FUNCTION__,ssid.c_str(), (*it).networkId);
             removeNetwork((*it).networkId);
             break;
         }
     }
     
-
     //从扫描结果里查找对应security
     if (security == WIFI_SECURITY_UNKNOWN)
     {
-        list<netWorkItem> scanlist = updateScanResult();
+        list<netWorkItem> scanlist = apListResult;
+
         for (list<netWorkItem>::iterator it = scanlist.begin(); it != scanlist.end(); it++)
         {
             if ( ssid.compare((*it).ssid) == 0 )
@@ -620,7 +914,7 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
                 {
                     security = WIFI_SECURITY_PSK;
                 }
-                else if ((*it).flags.find("EAP") != string::npos)
+                else if ((*it).flags.find("IEEE8021X") != string::npos)
                 {
                     security = WIFI_SECURITY_802DOT1X_EAP;
                 }
@@ -628,13 +922,13 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
                 {
                     security = WIFI_SECURITY_NONE;
                 }
-
                 break;
 
             }
 
         }
     }
+
 
     memset(reply, 0, sizeof(reply));
     reply_len = sizeof(reply) - 1;
@@ -663,10 +957,39 @@ int WPAManager::connectNetwork(const string ssid, const string password, int sec
     }
     else if (security == WIFI_SECURITY_802DOT1X_EAP)
     {
-        setNetworkParam(id, "key_mgmt", "WPA-EAP IEEE8021X", true);
+        //soc 接口没有传identity，暂时用不了
+        setNetworkParam(id, "key_mgmt", "IEEE8021X", true);
+        setNetworkParam(id, "identity", "username", true);
         setNetworkParam(id, "password", password.c_str(), true);
 
     }
+
+    save_config();
+
+    return 0;
+}
+
+int WPAManager::connectNetwork(int networkId)
+{
+    char reply[256], cmd[256];
+    size_t reply_len;
+    int id = networkId;
+
+    memset(reply, 0, sizeof(reply));
+    reply_len = sizeof(reply) - 1;
+
+    selectNetwork(std::to_string(id));
+
+    snprintf(cmd, sizeof(cmd), "ENABLE_NETWORK %d", id);
+    ctrlRequest(cmd, reply, &reply_len);
+    Debug("ENABLE_NETWORK %d ret %s\n", id, reply);
+
+    return 0;
+}
+
+int WPAManager::connectNetwork(const string ssid, const string password, int security )
+{
+    int id = addNetwork(ssid, password, security);
 
     connectNetwork(id);
 
@@ -732,8 +1055,8 @@ void WPAManager::removeNetwork(int networkId)
 
     string cmd = string("REMOVE_NETWORK ") + string(std::to_string(networkId));
     ctrlRequest(cmd.c_str(), reply, &reply_len);
-
     save_config();
+
 }
 
 bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
@@ -747,7 +1070,6 @@ bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
         return false;
     }
 
-//    Debug("%s get status %s\n", __FUNCTION__, buf);
 
     buf[len] = '\0';
     start = buf;
@@ -774,11 +1096,29 @@ bool WPAManager::getConnectedItem(netWorkItem *connectedItem)
                 if (strcmp(pos, "COMPLETED") == 0)
                     connectedItem->state = WIFI_STATE_CONNECTED;
             }
+            else if (strcmp(start, "key_mgmt") == 0) {
+                if (strstr(pos, "PSK"))
+                    connectedItem->security = WIFI_SECURITY_PSK;
+                else if (strstr(pos, "WEP"))
+                    connectedItem->security = WIFI_SECURITY_WEP;
+                else if (strstr(pos, "NONE"))
+                    connectedItem->security = WIFI_SECURITY_NONE;
+                else if (strstr(pos, "EAP"))
+                    connectedItem->security = WIFI_SECURITY_802DOT1X_EAP;
+            }
+            
         }
 
         if (last)
             break;
         start = end + 1;
+    }
+
+    char *result = get_popen_result("iw dev wlan0 link | grep \"signal\" | awk '{print $2}'");
+    if (result)
+    {
+        connectedItem->level = atoi(result);
+        free(result);
     }
 
     if (connectedItem->state == WIFI_STATE_CONNECTED && connectedItem->ssid != "")
@@ -906,9 +1246,146 @@ int WPAManager::ctrlRequest(const char *cmd, char *buf, size_t *buflen)
     return ret;
 }
 
+int WPAManager::setDhcpEnable(int set)
+{
+    dhcp_enable = set;
+    if (dhcp_enable == 9)
+    {
+        stop_udhcpc();
+    }
+
+    return 0;
+}
+
+int WPAManager::getDhcpEnable()
+{
+    return dhcp_enable;
+}
+
+int WPAManager::setLocalMask(string strIn)
+{
+    int socketfd;
+   
+    if(socketfd = socket(PF_INET, SOCK_STREAM, 0 ) == -1);  
+    {  
+        Debug("socket create failse...SetLocalNetMask!/n");  
+        return -1;  
+    } 
+ 
+    struct ifreq ifr_mask;
+    struct sockaddr_in *sin_net_mask;
+ 
+    memset(&ifr_mask, 0, sizeof(ifr_mask));
+    strncpy(ifr_mask.ifr_name, "wlan0", sizeof(ifr_mask.ifr_name) - 1);
+    sin_net_mask = (struct sockaddr_in *)&ifr_mask.ifr_addr;
+    sin_net_mask->sin_family = AF_INET;
+    inet_pton(AF_INET, strIn.c_str(), &sin_net_mask->sin_addr);
+ 
+    if (ioctl(socketfd, SIOCSIFNETMASK, &ifr_mask) < 0)
+    {
+        Debug("socket_netmask ioctl error!\n");
+        close( socketfd );    
+        return  -1;
+    }
+ 
+    close( socketfd );    
+    return 0;
+}
+
+int WPAManager::setLocalGateway(string strIn)
+{
+    int sockfd;
+    
+    sockfd = socket(AF_INET, SOCK_DGRAM, 0);
+    if (sockfd == -1)
+    {
+        Debug("%s sock create false.\n", __FUNCTION__);
+        return -1;
+    }
+ 
+    struct rtentry rmten;
+    struct sockaddr_in ic_gateway ;	// Gateway IP address 
+    int err;
+    
+    memset(&rmten, 0, sizeof(rmten));
+       
+    ic_gateway.sin_family = AF_INET; 
+    ic_gateway.sin_addr.s_addr = inet_addr(strIn.c_str());
+    ic_gateway.sin_port = 0; 
+ 
+    ((struct sockaddr_in*)&rmten.rt_dst)->sin_family = AF_INET;
+    ((struct sockaddr_in*)&rmten.rt_dst)->sin_addr.s_addr = 0;
+    ((struct sockaddr_in*)&rmten.rt_dst)->sin_port = 0;
+ 
+    ((struct sockaddr_in*)&rmten.rt_genmask)->sin_family = AF_INET;
+    ((struct sockaddr_in*)&rmten.rt_genmask)->sin_addr.s_addr = 0;
+    ((struct sockaddr_in*)&rmten.rt_genmask)->sin_port = 0;
+ 
+    memcpy((void *) &rmten.rt_gateway, &ic_gateway, sizeof(ic_gateway));
+    rmten.rt_flags = RTF_UP | RTF_GATEWAY;
+    
+    if ((err = ioctl(sockfd, SIOCADDRT, &rmten)) < 0) 
+    {
+        printf("ioctl net error!\n");
+        return false;
+    }
+ 
+    close( sockfd );
+    return 0;
+
+}
+
+int WPAManager::setLocalIp(string strIn)
+{
+    int sock_set_ip;  
+
+    struct sockaddr_in sin_set_ip;  
+    struct ifreq ifr_set_ip;  
+
+    bzero( &ifr_set_ip,sizeof(ifr_set_ip));  
+
+
+    if(sock_set_ip = socket( AF_INET, SOCK_STREAM, 0 ) == -1);  
+    {  
+        Debug("socket create failse...SetLocalIp!\n");  
+        return -1;  
+    }  
+
+    memset( &sin_set_ip, 0, sizeof(sin_set_ip));  
+    strncpy(ifr_set_ip.ifr_name, "wlan0", sizeof(ifr_set_ip.ifr_name)-1);     
+
+    sin_set_ip.sin_family = AF_INET;  
+    sin_set_ip.sin_addr.s_addr = inet_addr(strIn.c_str());  
+    memcpy( &ifr_set_ip.ifr_addr, &sin_set_ip, sizeof(sin_set_ip));  
+
+    if( ioctl( sock_set_ip, SIOCSIFADDR, &ifr_set_ip) < 0 )  
+    {  
+        Debug( "Not setup interface\n");  
+        close(sock_set_ip);
+        return -1;  
+    }  
+
+    //设置激活标志  
+    ifr_set_ip.ifr_flags |= IFF_UP |IFF_RUNNING;  
+
+    //get the status of the device  
+    if( ioctl( sock_set_ip, SIOCSIFFLAGS, &ifr_set_ip ) < 0 )  
+    {  
+        Debug("SIOCSIFFLAGS fail\n");  
+        close( sock_set_ip );  
+        return -1;  
+    }  
+
+    close( sock_set_ip );  
+    return 0;  
+  
+}
+
 WPAManager::~WPAManager()
 {
     Debug("destory WPAManager\n");
+
+    pthread_mutex_destroy(&apListResult_mutex);
 
     closeWPAConnection();
 

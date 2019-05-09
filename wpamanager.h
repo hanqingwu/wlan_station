@@ -12,11 +12,11 @@ using  std::list;
 
 #define CTRL_EVENT_CONNECTING "Trying to associate with"
 enum Wifi_Security
-{
-    WIFI_SECURITY_UNKNOWN = 0,
-    WIFI_SECURITY_NONE,
-    WIFI_SECURITY_WEP,
+{   
+    WIFI_SECURITY_UNKNOWN = -1,
+    WIFI_SECURITY_NONE = 0,
     WIFI_SECURITY_PSK,
+    WIFI_SECURITY_WEP,
     WIFI_SECURITY_802DOT1X_EAP
 
 };
@@ -29,6 +29,19 @@ enum WifiState {
     WIFI_STATE_CONNECTED,
 };
 
+
+enum NetworkStatus
+{
+	WIFI_STATUS_DISABLED,
+	WIFI_STATUS_ENABLED,
+	WIFI_STATUS_CURRENT,
+	WIFI_STATUS_CONNECTING,
+	WIFI_STATUS_GETTING_IP,
+	WIFI_STATUS_CONNECTED,
+	WIFI_STATUS_DISCONNECTED,
+	WIFI_STATUS_NOT_IN_RANGE,
+	WIFI_STATUS_SAVED
+};
 struct netWorkItem
 {
     string ssid;
@@ -36,6 +49,13 @@ struct netWorkItem
     string frequence;
     string signal;
     string flags;
+
+    int status;
+    int security;
+    int level;
+    int mode;
+    int maxSpeed;
+
     int networkId = -1;
     WifiState state = WIFI_STATE_NULL;
 };
@@ -53,8 +73,11 @@ public:
     //获取当前可用wifi AP
     list<netWorkItem> get_avail_wireless_network();
 
+    //直接返回scan_result
+    list<netWorkItem> getWifiListInfo();
+
     //连接WIFI或断开
-    int connectNetwork(const string ssid, const string password, int security = 0);
+    int connectNetwork(const string ssid, const string password, int security = -1);
     int connectNetwork(int networkId);
     void disconnectNetwork();
 
@@ -62,18 +85,16 @@ public:
     bool getConnectedItem(netWorkItem *connectedItem);
 
     //获取wlan mac info
-    int getLocalWifiMacInfo(string &mac);
+    //int getLocalWifiMacInfo(string &mac);
 
     //删除已配置网络
+    int addNetwork(const string ssid, const string password, int security = -1);
     void removeNetwork(int networkId);
     int  removeNetwork(const string &ssid);
 
     //监听线程使用
     struct wpa_ctrl *get_monitor_conn();
     void receiveMsgs();
-   
-    //扫描启动
-    void scan();
 
     int ping();
     int set_status_callback(int (*status_change)(int status));
@@ -81,10 +102,39 @@ public:
     pthread_mutex_t  monitor_thread_exit_mutex;
     pthread_mutex_t  control_thread_exit_mutex;
 
+    //扫描启动
+    void scan();
+
+    int getLocalIpInfo(std::string &strOut);
+    int getMacInfo(std::string &strOut);
+    int getMaskInfo(std::string &strOut);
+    int getMaxSpeed();
+    int getGateway(std::string &strOut);
+    int getDns(std::string &strOut, std::string & strBakDns);
+
+    int setLocalIp(std::string strIn);
+    int setLocalMask(std::string strIn);
+    int setLocalGateway(std::string strIn);
+    int setLocalDns(std::string strIn, std::string strIn2);
+
+    //提供给soc的回调
+    int (*scanCallBack)(); 
+    int (*connectCallBack)(int status);
+
+    int setDhcpEnable(int set);
+    int getDhcpEnable();
+
 private:
     static WPAManager *_instance;
 
     int power_state;
+
+    int dhcp_enable;
+
+    //扫描结果
+    list<netWorkItem> apListResult;
+
+    pthread_mutex_t  apListResult_mutex;
 
     int (*status_change)(int status);
 

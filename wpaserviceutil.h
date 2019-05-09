@@ -238,9 +238,9 @@ inline void lanStateChanhe(bool state)
     }
 }
 
-inline void get_IP_address()
+inline void stop_udhcpc()
 {
-    int pid;
+   int pid;
     char *cmd = NULL;
 
     if (is_udhcpc_running()) {
@@ -248,6 +248,12 @@ inline void get_IP_address()
         asprintf(&cmd, "kill %d", pid);
         console_run(cmd);
     }
+   
+}
+
+inline void get_IP_address()
+{
+    stop_udhcpc();
 
     detached_run("udhcpc -i wlan0 &");
 }
